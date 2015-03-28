@@ -8,7 +8,7 @@
       form { background: #000; padding: 3px; position: fixed; bottom: 0; width: 100%; }
       form input { border: 0; padding: 10px; width: 90%; margin-right: .5%; }
       form button { width: 9%; background: rgb(130, 224, 255); border: none; padding: 10px; }
-      #messages { list-style-type: none; margin: 0; padding: 0; }
+      #messages { list-style-type: none; margin: 0; padding: 0; padding-bottom: 100px; }
       #messages li { padding: 5px 10px; }
       #messages li:nth-child(odd) { background: #eee; }
     </style>
@@ -20,15 +20,49 @@
     </form>
     <script src="https://cdn.socket.io/socket.io-1.2.0.js"></script>
     <script src="http://code.jquery.com/jquery-1.11.1.js"></script>
+    <script src="http://yastatic.net/jquery/cookie/1.0/jquery.cookie.min.js"></script>
     <script>
       var socket = io();
+      var username = $.cookie('username');
+      var usernames = [];
+      var messages = [];
+      if (username === null) {
+        username = Math.random().toString();
+        $.cookie('username', username);
+      }
+      socket.emit('restoreClient', username);
       $('form').submit(function(){
-        socket.emit('chat message', $('#m').val());
+        socket.emit('chat message', [username, $('#m').val()]);
         $('#m').val('');
         return false;
       });
-      socket.on('chat message', function(msg){
-        $('#messages').append($('<li>').text(msg));
+      var nick = function (nick) {
+        if (nick === username) {
+          return 'me';
+        }
+        var pos = usernames.indexOf(nick);
+        if (pos === -1) {
+          usernames.push(nick);
+          pos = usernames.length - 1;
+        }
+        return 'sameperson' + pos;
+      };
+      var onChatMessage = function (msg) {
+        messages.push(msg);
+        $('#messages').append($('<li>').text(nick(msg[0]) + ': ' + msg[1]));
+      };
+      socket.on('chat message', onChatMessage);
+      socket.on('restoreServer', function () {
+        socket.emit('restoreServer', messages);
+      });
+      socket.on('restoreClient', function (history) {
+        if (!messages.length) {
+          for (var i in history) {
+            if (history.hasOwnProperty(i)) {
+              onChatMessage(history[i]);
+            }
+          }
+        }
       });
     </script>
   </body>

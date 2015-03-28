@@ -1,24 +1,140 @@
 var app = require('express')();
 var http = require('http').Server(app);
-var socketio = require('socket.io')(http);
+var io = require('socket.io')(http);
 
-app.get('/', function(req, res) {
-  res.sendFile(__dirname + '/index.html');
+// This is needed if the app is run on heroku:
+
+var port = process.env.PORT || 3000;
+
+// Initialize a new socket.io object. It is bound to
+// the express app, which allows them to coexist.
+
+var io = require('socket.io').listen(app.listen(port));
+
+require('./config')(app, io);
+
+// Initiailize socket.io
+
+app.get('/', function(req, res){
+
+  // Render views/home.html
+  res.render('home');
 });
 
-http.listen(3000, function() {
-  console.log('listening on *.3000');
+app.get('/create', function(req,res){
+
+  // Generate unique id for the room
+  var id = Math.round((Math.random() * 1000000));
+
+  // Redirect to the random room
+  res.redirect('/chat/'+id);
 });
 
-socketio.on('connection', function(socket) {
-  console.log('someone is joining the chat. oooooo');
-  socket.on('disconnect', function() {
-    console.log('someone is leaving the chat.');
+app.get('/chat/:id', function(req,res){
+
+  // Render the chant.html view
+  res.render('chat');
+});
+
+// Initialize a new socket.io application, named 'chat'
+var chat = io.on('connection', function (socket) {
+
+  // When the client emits the 'load' event, reply with the
+  // number of people in this chat room
+
+  socket.on('load',function(data){
+
+    var room = findClientsSocket(io,data);
+    if(room.length === 0 ) {
+
+      socket.emit('peopleinchat', {number: 0});
+    }
+    else if(room.length === 1) {
+
+      socket.emit('peopleinchat', {
+        number: 1,
+        user: room[0].username,
+        avatar: room[0].avatar,
+        id: data
+      });
+    }
+    else if(room.length >= 2) {
+
+      chat.emit('tooMany', {boolean: true});
+    }
   });
-});
 
-socketio.on('connection', function(socket){
-  socket.on('chat message', function(msg){
-    socketio.emit('chat message', msg);
+  // When the client emits 'login', save his name and avatar,
+  // and add them to the room
+  socket.on('login', function(data) {
+
+    var room = findClientsSocket(io, data.id);
+    // Only two people per room are allowed
+    if (room.length < 2) {
+
+      // Use the socket object to store data. Each client gets
+      // their own unique socket object
+
+      socket.username = data.user;
+      socket.room = data.id;
+      socket.avatar = gravatar.url(data.avatar, {s: '140', r: 'x', d: 'mm'});
+
+      // Tell the person what he should use for an avatar
+      socket.emit('img', socket.avatar);
+
+
+      // Add the client to the room
+      socket.join(data.id);
+
+      if (room.length == 1) {
+
+        var usernames = [],
+          avatars = [];
+
+        usernames.push(room[0].username);
+        usernames.push(socket.username);
+
+        avatars.push(room[0].avatar);
+        avatars.push(socket.avatar);
+
+        // Send the startChat event to all the people in the
+        // room, along with a list of people that are in it.
+
+        chat.in(data.id).emit('startChat', {
+          boolean: true,
+          id: data.id,
+          users: usernames,
+          avatars: avatars
+        });
+      }
+    }
+    else {
+      socket.emit('tooMany', {boolean: true});
+    }
+  });
+
+  // Somebody left the chat
+  socket.on('disconnect', function() {
+
+    // Notify the other person in the chat room
+    // that his partner has left
+
+    socket.broadcast.to(this.room).emit('leave', {
+      boolean: true,
+      room: this.room,
+      user: this.username,
+      avatar: this.avatar
+    });
+
+    // leave the room
+    socket.leave(socket.room);
+  });
+
+
+  // Handle the sending of messages
+  socket.on('msg', function(data){
+
+    // When the server receives a message, it sends it to the other person in the room.
+    socket.broadcast.to(socket.room).emit('receive', {msg: data.msg, user: data.user, img: data.img});
   });
 });
